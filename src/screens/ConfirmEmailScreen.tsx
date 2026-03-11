@@ -12,7 +12,6 @@ export default function ConfirmEmailScreen({ route, navigation }: Props) {
 
   const [loading, setLoading] = useState(false);
 
-  // ✅ Expo 환경에 맞는 redirect url 생성 (Expo Go면 exp://... 형태)
   const emailRedirectTo = useMemo(() => Linking.createURL("auth/callback"), []);
 
   const resend = async () => {
@@ -64,7 +63,7 @@ export default function ConfirmEmailScreen({ route, navigation }: Props) {
           marginTop: 10,
         }}
       >
-        {loading && <ActivityIndicator />}
+        {loading && <ActivityIndicator color="white" />}
         <Text style={{ color: "white", fontWeight: "900" }}>인증메일 재전송</Text>
       </Pressable>
 
@@ -78,12 +77,8 @@ export default function ConfirmEmailScreen({ route, navigation }: Props) {
       </Pressable>
 
       <Text style={{ opacity: 0.55, fontSize: 12, marginTop: 10 }}>
-        * 인증 링크를 눌렀는데 “otp_expired”가 뜨면,
-        오래된 메일일 가능성이 큽니다. “재전송” 후 새 메일로 다시 진행하세요.
-      </Text>
-
-      <Text style={{ opacity: 0.35, fontSize: 11 }}>
-        (디버그) emailRedirectTo = {emailRedirectTo}
+        * 인증 링크를 눌렀는데 "otp_expired"가 뜨면,
+        오래된 메일일 가능성이 큽니다. "재전송" 후 새 메일로 다시 진행하세요.
       </Text>
     </View>
   );

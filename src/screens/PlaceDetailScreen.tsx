@@ -1,9 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator, FlatList, Alert, ScrollView, TextInput } from "react-native";
+import {
+  View, Text, Pressable, ActivityIndicator,
+  Alert, ScrollView, TextInput, Linking,
+} from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAuthStore } from "../store/useAuthStore";
+import { useGroupsStore } from "../store/useGroupsStore";
 import { supabase } from "../lib/supabase";
+import { colors, radius, spacing, typography } from "../theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "PlaceDetail">;
 
@@ -20,8 +25,9 @@ type PlaceRow = {
 type RatingRow = {
   place_id: string;
   user_id: string;
-  rating: number | string; // numeric면 string으로 올 수도 있어서 둘 다 허용
-  created_at: string;
+  value: number | string;
+  rated_at: string;
+  comment: string | null;
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -36,6 +42,19 @@ function parseDecimal(text: string) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function StarBar({ value, max = 5 }: { value: number; max?: number }) {
+  const filled = Math.round(value);
+  return (
+    <View style={{ flexDirection: "row", gap: 2 }}>
+      {Array.from({ length: max }).map((_, i) => (
+        <Text key={i} style={{ fontSize: 16, color: i < filled ? "#FFB800" : colors.border }}>
+          ★
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 export default function PlaceDetailScreen({ route, navigation }: Props) {
   const { groupId, placeId } = route.params;
 
@@ -46,68 +65,59 @@ export default function PlaceDetailScreen({ route, navigation }: Props) {
     return user.id ?? null;
   }, [user]);
 
+  const { groups, deletePlace } = useGroupsStore();
+
+  const myRole = useMemo(() => {
+    const group = groups.find((g) => g.id === groupId);
+    return group?.myRole ?? "member";
+  }, [groups, groupId]);
+
   const [loading, setLoading] = useState(true);
   const [place, setPlace] = useState<PlaceRow | null>(null);
   const [ratings, setRatings] = useState<RatingRow[]>([]);
   const [nickMap, setNickMap] = useState<Record<string, string>>({});
-
   const [myRating, setMyRating] = useState<number>(0);
+  const [myRatingText, setMyRatingText] = useState<string>("0");
+  const [myComment, setMyComment] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   const avg = useMemo(() => {
     if (!ratings.length) return 0;
-    const sum = ratings.reduce((acc, r) => acc + Number(r.rating), 0);
+    const sum = ratings.reduce((acc, r) => acc + Number(r.value), 0);
     return sum / ratings.length;
   }, [ratings]);
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
+      if (!userId) throw new Error("로그인이 필요합니다.");
 
-      // 로그인(계정 모드) 기준
-      if (!userId) {
-        throw new Error("로그인이 필요합니다. (이메일/비번 계정 모드)");
-      }
-
-      // 1) place
       const { data: p, error: pErr } = await supabase
-        .from("places")
-        .select("*")
-        .eq("id", placeId)
-        .single();
-
+        .from("places").select("*").eq("id", placeId).single();
       if (pErr) throw pErr;
       setPlace(p as PlaceRow);
 
-      // 2) ratings
       const { data: rs, error: rErr } = await supabase
-        .from("place_ratings")
-        .select("*")
-        .eq("place_id", placeId)
-        .order("created_at", { ascending: false });
-
+        .from("place_ratings").select("*").eq("place_id", placeId)
+        .order("rated_at", { ascending: false });
       if (rErr) throw rErr;
 
       const rows = ((rs ?? []) as any[]) as RatingRow[];
       setRatings(rows);
 
       const mine = rows.find((r) => r.user_id === userId);
-      setMyRating(mine ? round1(Number(mine.rating)) : 0);
+      const mineVal = mine ? round1(Number(mine.value)) : 0;
+      setMyRating(mineVal);
+      setMyRatingText(String(mineVal));
+      setMyComment(mine?.comment ?? "");
 
-      // 3) nickname lookup
       const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
       if (userIds.length) {
         const { data: ps, error: p2Err } = await supabase
-          .from("profiles")
-          .select("id,nickname")
-          .in("id", userIds);
-
+          .from("profiles").select("id,nickname").in("id", userIds);
         if (p2Err) throw p2Err;
-
         const map: Record<string, string> = {};
-        (ps ?? []).forEach((x: any) => {
-          map[x.id] = x.nickname;
-        });
+        (ps ?? []).forEach((x: any) => { map[x.id] = x.nickname; });
         setNickMap(map);
       } else {
         setNickMap({});
@@ -119,34 +129,33 @@ export default function PlaceDetailScreen({ route, navigation }: Props) {
     }
   }, [placeId, userId]);
 
+  useEffect(() => { load(); }, [load]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    const unsubscribe = navigation.addListener("focus", () => { load(); });
+    return unsubscribe;
+  }, [navigation, load]);
 
   const inc = (delta: number) => {
-    setMyRating((prev) => round1(clamp(prev + delta, 0, 5)));
+    const next = round1(clamp(myRating + delta, 0, 5));
+    setMyRating(next);
+    setMyRatingText(String(next));
   };
 
   const saveMyRating = async () => {
     if (!userId) {
-      Alert.alert("로그인 필요", "이 기능은 계정 로그인(이메일/비번) 모드에서 사용됩니다.");
+      Alert.alert("로그인 필요", "이 기능은 계정 로그인 모드에서 사용됩니다.");
       return;
     }
-
     try {
       setSaving(true);
-
       const { error } = await supabase.from("place_ratings").upsert(
-        {
-          place_id: placeId,
-          user_id: userId,
-          rating: myRating,
-        },
+        { place_id: placeId, user_id: userId, value: myRating, comment: myComment.trim() || null },
         { onConflict: "place_id,user_id" }
       );
-
       if (error) throw error;
       await load();
+      Alert.alert("완료", "평점이 저장됐어요!");
     } catch (e: any) {
       Alert.alert("오류", e?.message ?? "저장에 실패했습니다.");
     } finally {
@@ -154,124 +163,290 @@ export default function PlaceDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const onDeletePlace = () => {
+    Alert.alert(
+      "맛집 삭제",
+      `"${place?.name}" 맛집을 삭제할까요?\n평점 기록도 모두 삭제됩니다.`,
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "삭제", style: "destructive",
+          onPress: async () => {
+            try {
+              await deletePlace(placeId, groupId);
+              navigation.goBack();
+            } catch (e: any) {
+              Alert.alert("실패", e?.message ?? "삭제에 실패했습니다.");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const openNaverMap = () => {
+    if (!place) return;
+    const query = encodeURIComponent(place.name);
+    Linking.openURL(`naver map://search?query=${query}`).catch(() =>
+      Linking.openURL(`https://map.naver.com/v5/search/${query}`)
+    );
+  };
+
   if (loading) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator />
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}>
+        <ActivityIndicator color={colors.primary} />
       </View>
     );
   }
 
   if (!place) {
     return (
-      <View style={{ flex: 1, padding: 20, gap: 10 }}>
-        <Text>맛집을 찾을 수 없어요.</Text>
+      <View style={{ flex: 1, padding: 20, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}>
+        <Text style={{ color: colors.textSecondary, marginBottom: spacing.md }}>맛집을 찾을 수 없어요.</Text>
         <Pressable
           onPress={() => navigation.goBack()}
-          style={{ backgroundColor: "black", padding: 12, borderRadius: 12 }}
+          style={{ backgroundColor: colors.primary, padding: spacing.md, borderRadius: radius.lg }}
         >
-          <Text style={{ color: "white", textAlign: "center", fontWeight: "900" }}>뒤로</Text>
+          <Text style={{ color: colors.white, fontWeight: "700" }}>뒤로</Text>
         </Pressable>
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, gap: 14 }}>
-      <Text style={{ fontSize: 24, fontWeight: "900" }}>{place.name}</Text>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.background }}
+      contentContainerStyle={{ padding: spacing.xl, gap: spacing.md, paddingBottom: 40 }}
+    >
+      {/* 헤더 카드 */}
+      <View style={{
+        backgroundColor: colors.card, borderRadius: radius.lg,
+        padding: spacing.lg, gap: spacing.sm,
+        shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+      }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text, flex: 1 }}>
+            {place.name}
+          </Text>
+          {myRole === "admin" && (
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Pressable
+                onPress={() => navigation.navigate("EditPlace", { groupId, placeId })}
+                style={{
+                  paddingVertical: 6, paddingHorizontal: 12,
+                  borderRadius: radius.full, backgroundColor: colors.background,
+                  borderWidth: 1, borderColor: colors.border,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.textSecondary }}>수정</Text>
+              </Pressable>
+              <Pressable
+                onPress={onDeletePlace}
+                style={{
+                  paddingVertical: 6, paddingHorizontal: 12,
+                  borderRadius: radius.full, backgroundColor: colors.dangerLight,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.danger }}>삭제</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
 
-      <Text style={{ opacity: 0.7 }}>
-        평균 {ratings.length ? avg.toFixed(1) : "0.0"} / 5.0 · {ratings.length}명 참여
-      </Text>
+        {/* 평균 평점 */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <StarBar value={avg} />
+          <Text style={{ fontSize: 16, fontWeight: "800", color: colors.text }}>
+            {ratings.length ? avg.toFixed(1) : "0.0"}
+          </Text>
+          <Text style={{ ...typography.caption }}>· {ratings.length}명 참여</Text>
+        </View>
 
-      {!!place.tags?.length && (
-        <Text style={{ opacity: 0.7 }}>태그: {place.tags.join(" · ")}</Text>
-      )}
-      {!!place.memo && <Text style={{ opacity: 0.8 }}>메모: {place.memo}</Text>}
+        {/* 태그 */}
+        {!!place.tags?.length && (
+          <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+            {place.tags.map((tag, i) => (
+              <View key={i} style={{
+                backgroundColor: colors.primaryLight,
+                paddingVertical: 3, paddingHorizontal: 8,
+                borderRadius: radius.full,
+              }}>
+                <Text style={{ fontSize: 11, fontWeight: "600", color: colors.primaryDark }}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
-      <View style={{ gap: 8, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: "#eee" }}>
-        <Text style={{ fontWeight: "900" }}>내 평점 (0.1 단위)</Text>
+        {/* 메모 */}
+        {!!place.memo && (
+          <Text style={{ ...typography.body, color: colors.textSecondary }}>
+            {place.memo}
+          </Text>
+        )}
 
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        {/* 네이버 지도 버튼 */}
+        <Pressable
+          onPress={openNaverMap}
+          style={{
+            flexDirection: "row", alignItems: "center", justifyContent: "center",
+            gap: spacing.sm, padding: spacing.md,
+            backgroundColor: "#03C75A",
+            borderRadius: radius.lg, marginTop: spacing.sm,
+          }}
+        >
+          <Text style={{ color: colors.white, fontWeight: "800", fontSize: 14 }}>
+            🗺️ 네이버 지도에서 보기
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* 내 평점 카드 */}
+      <View style={{
+        backgroundColor: colors.card, borderRadius: radius.lg,
+        padding: spacing.lg, gap: spacing.md,
+        shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+      }}>
+        <Text style={{ fontWeight: "800", fontSize: 15, color: colors.text }}>내 평점</Text>
+
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.md }}>
           <Pressable
             onPress={() => inc(-0.1)}
-            style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: "#ddd" }}
+            style={{
+              width: 44, height: 44, borderRadius: radius.full,
+              backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border,
+              alignItems: "center", justifyContent: "center",
+            }}
           >
-            <Text style={{ fontWeight: "900" }}>-0.1</Text>
+            <Text style={{ fontWeight: "700", fontSize: 16, color: colors.text }}>−</Text>
           </Pressable>
 
-          <Text style={{ fontSize: 18, fontWeight: "900", minWidth: 70, textAlign: "center" }}>
-            {myRating.toFixed(1)}
+          <Text style={{ fontSize: 32, fontWeight: "900", color: colors.text, minWidth: 80, textAlign: "center" }}>
+            {myRatingText}
           </Text>
 
           <Pressable
             onPress={() => inc(0.1)}
-            style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: "#ddd" }}
+            style={{
+              width: 44, height: 44, borderRadius: radius.full,
+              backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border,
+              alignItems: "center", justifyContent: "center",
+            }}
           >
-            <Text style={{ fontWeight: "900" }}>+0.1</Text>
+            <Text style={{ fontWeight: "700", fontSize: 16, color: colors.text }}>+</Text>
           </Pressable>
         </View>
 
         <TextInput
-          value={String(myRating)}
-          onChangeText={(t) => setMyRating(round1(clamp(parseDecimal(t), 0, 5)))}
+          value={myRatingText}
+          onChangeText={(t) => {
+            setMyRatingText(t);
+            const n = parseDecimal(t);
+            if (Number.isFinite(n)) {
+              setMyRating(round1(clamp(n, 0, 5)));
+            }
+          }}
           keyboardType="numeric"
           placeholder="직접 입력 (예: 4.3)"
-          style={{ borderWidth: 1, borderColor: "#eee", borderRadius: 12, padding: 12 }}
+          placeholderTextColor={colors.textTertiary}
+          style={{
+            backgroundColor: colors.background, borderRadius: radius.md,
+            padding: spacing.md, fontSize: 15, color: colors.text,
+            textAlign: "center",
+          }}
         />
+
+        {/* 한줄평 */}
+        <TextInput
+          value={myComment}
+          onChangeText={setMyComment}
+          placeholder="한줄평을 남겨보세요 (선택)"
+          placeholderTextColor={colors.textTertiary}
+          maxLength={100}
+          style={{
+            backgroundColor: colors.background, borderRadius: radius.md,
+            padding: spacing.md, fontSize: 14, color: colors.text,
+          }}
+        />
+        <Text style={{ ...typography.caption, textAlign: "right", marginTop: -spacing.sm }}>
+          {myComment.length}/100
+        </Text>
 
         <Pressable
           onPress={saveMyRating}
           disabled={saving}
           style={{
-            backgroundColor: "black",
-            padding: 12,
-            borderRadius: 12,
-            opacity: saving ? 0.6 : 1,
-            marginTop: 6,
+            backgroundColor: colors.primary, padding: spacing.md,
+            borderRadius: radius.lg, opacity: saving ? 0.6 : 1,
+            alignItems: "center",
           }}
         >
-          <Text style={{ color: "white", textAlign: "center", fontWeight: "900" }}>
-            {saving ? "저장 중..." : "내 평점 저장"}
+          <Text style={{ color: colors.white, fontWeight: "800", fontSize: 15 }}>
+            {saving ? "저장 중..." : "평점 저장"}
           </Text>
         </Pressable>
       </View>
 
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <Pressable
-          onPress={load}
-          style={{ borderWidth: 1, borderColor: "#ddd", padding: 12, borderRadius: 12, flex: 1 }}
-        >
-          <Text style={{ textAlign: "center", fontWeight: "900" }}>새로고침</Text>
-        </Pressable>
-      </View>
+      {/* 새로고침 */}
+      <Pressable
+        onPress={load}
+        style={{
+          borderWidth: 1, borderColor: colors.border,
+          padding: spacing.md, borderRadius: radius.lg,
+          alignItems: "center",
+        }}
+      >
+        <Text style={{ fontWeight: "700", color: colors.textSecondary }}>새로고침</Text>
+      </Pressable>
 
-      <Text style={{ fontSize: 18, fontWeight: "900", marginTop: 6 }}>누가 몇 점 줬는지</Text>
+      {/* 평점 목록 */}
+      <Text style={{ fontSize: 16, fontWeight: "800", color: colors.text }}>모두의 평점</Text>
 
-      <FlatList
-        data={ratings}
-        keyExtractor={(item) => `${item.user_id}-${item.place_id}`}
-        scrollEnabled={false}
-        renderItem={({ item }) => {
+      {ratings.length === 0 ? (
+        <View style={{
+          backgroundColor: colors.card, borderRadius: radius.lg,
+          padding: 30, alignItems: "center", gap: spacing.sm,
+        }}>
+          <Text style={{ fontSize: 30 }}>⭐</Text>
+          <Text style={{ ...typography.caption }}>아직 평점이 없어요</Text>
+        </View>
+      ) : (
+        ratings.map((item) => {
           const nickname = nickMap[item.user_id] ?? item.user_id.slice(0, 8);
           return (
-            <View
-              style={{
-                padding: 14,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: "#eee",
-                marginTop: 10,
-              }}
-            >
-              <Text style={{ fontWeight: "900" }}>{nickname}</Text>
-              <Text style={{ marginTop: 6, fontSize: 16 }}>{Number(item.rating).toFixed(1)} / 5.0</Text>
-              <Text style={{ marginTop: 6, opacity: 0.6 }}>{new Date(item.created_at).toLocaleString()}</Text>
+            <View key={`${item.user_id}-${item.place_id}`} style={{
+              backgroundColor: colors.card, borderRadius: radius.lg,
+              padding: spacing.lg, gap: spacing.sm,
+              shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+            }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ fontWeight: "700", color: colors.text }}>{nickname}</Text>
+                <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>
+                  {Number(item.value).toFixed(1)}
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <StarBar value={Number(item.value)} />
+                <Text style={{ ...typography.caption }}>
+                  {new Date(item.rated_at).toLocaleDateString()}
+                </Text>
+              </View>
+              {!!item.comment && (
+                <View style={{
+                  backgroundColor: colors.background,
+                  borderRadius: radius.md,
+                  padding: spacing.sm,
+                  marginTop: 2,
+                }}>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                    💬 {item.comment}
+                  </Text>
+                </View>
+              )}
             </View>
           );
-        }}
-        ListEmptyComponent={<Text style={{ opacity: 0.7, marginTop: 8 }}>아직 평점이 없어요.</Text>}
-      />
+        })
+      )}
     </ScrollView>
   );
 }

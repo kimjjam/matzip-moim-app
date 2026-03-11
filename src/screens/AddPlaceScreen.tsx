@@ -1,9 +1,13 @@
 import React, { useMemo, useState } from "react";
-import { View, Text, TextInput, Pressable, Alert, ScrollView, ActivityIndicator } from "react-native";
+import {
+  View, Text, TextInput, Pressable, Alert,
+  ScrollView, ActivityIndicator,
+} from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAuthStore } from "../store/useAuthStore";
 import { supabase } from "../lib/supabase";
+import { colors, radius, spacing, typography } from "../theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AddPlace">;
 
@@ -22,31 +26,29 @@ function parseDecimal(text: string) {
 export default function AddPlaceScreen({ navigation, route }: Props) {
   const { groupId } = route.params;
 
-  // useAuthStore.user가 아직 string일 수도 있어서 안전하게 userId만 뽑음
   const user = useAuthStore((s: any) => s.user);
   const userId: string | null = useMemo(() => {
     if (!user) return null;
-    if (typeof user === "string") return null; // (기존 닉네임 로그인 모드)
-    return user.id ?? null; // (Supabase auth 모드)
+    if (typeof user === "string") return null;
+    return user.id ?? null;
   }, [user]);
 
   const [name, setName] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [memo, setMemo] = useState("");
-
-  // 0.1 단위 평점
   const [initialRating, setInitialRating] = useState<number>(0);
+  const [initialRatingText, setInitialRatingText] = useState<string>("0");
+  const [initialComment, setInitialComment] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   const tags = useMemo(() => {
-    return tagsText
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
+    return tagsText.split(",").map((t) => t.trim()).filter(Boolean);
   }, [tagsText]);
 
   const inc = (delta: number) => {
-    setInitialRating((prev) => round1(clamp(prev + delta, 0, 5)));
+    const next = round1(clamp(initialRating + delta, 0, 5));
+    setInitialRating(next);
+    setInitialRatingText(String(next));
   };
 
   const onCreate = async () => {
@@ -56,15 +58,12 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
       return;
     }
     if (!userId) {
-      Alert.alert("로그인 필요", "이 기능은 계정 로그인(이메일/비번) 모드에서 사용됩니다.");
+      Alert.alert("로그인 필요", "이 기능은 계정 로그인 모드에서 사용됩니다.");
       return;
     }
 
     try {
       setSaving(true);
-
-      // 1) places 생성
-      const memoValue = memo.trim() ? memo.trim() : null;
 
       const { data: placeRow, error: placeErr } = await supabase
         .from("places")
@@ -72,8 +71,9 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
           group_id: groupId,
           name: trimmed,
           tags,
-          memo: memoValue,
+          memo: memo.trim() || null,
           created_by: userId,
+          visited_at: new Date().toISOString(),
         })
         .select("id")
         .single();
@@ -83,20 +83,19 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
 
       const placeId = (placeRow as any).id as string;
 
-      // 2) 초기 평점(선택): 0이면 저장 안 함
       if (initialRating > 0) {
         const { error: rateErr } = await supabase.from("place_ratings").upsert(
           {
             place_id: placeId,
             user_id: userId,
-            rating: initialRating,
+            value: initialRating,
+            comment: initialComment.trim() || null,
           },
           { onConflict: "place_id,user_id" }
         );
         if (rateErr) throw rateErr;
       }
 
-      // 3) 상세로 이동
       navigation.replace("PlaceDetail", { groupId, placeId });
     } catch (e: any) {
       Alert.alert("오류", e?.message ?? "저장에 실패했습니다.");
@@ -105,84 +104,162 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
     }
   };
 
+  const inputStyle = {
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    fontSize: 15,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+  };
+
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
-      <Text style={{ fontSize: 22, fontWeight: "900" }}>맛집 추가</Text>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.background }}
+      contentContainerStyle={{ padding: spacing.xl, gap: spacing.md, paddingBottom: 40 }}
+    >
+      <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text, marginBottom: spacing.sm }}>
+        맛집 추가
+      </Text>
 
-      <TextInput
-        value={name}
-        onChangeText={setName}
-        placeholder="맛집 이름 (필수)"
-        style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12 }}
-      />
+      {/* 맛집 이름 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>맛집 이름 <Text style={{ color: colors.danger }}>*</Text></Text>
+        <TextInput
+          value={name}
+          onChangeText={setName}
+          placeholder="예: 을지로 라멘집"
+          placeholderTextColor={colors.textTertiary}
+          style={inputStyle}
+        />
+      </View>
 
-      <TextInput
-        value={tagsText}
-        onChangeText={setTagsText}
-        placeholder="태그 (쉼표로 구분) 예: 라멘, 혼밥"
-        style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12 }}
-      />
+      {/* 태그 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>태그</Text>
+        <TextInput
+          value={tagsText}
+          onChangeText={setTagsText}
+          placeholder="쉼표로 구분 (예: 라멘, 혼밥, 점심)"
+          placeholderTextColor={colors.textTertiary}
+          style={inputStyle}
+        />
+        {tags.length > 0 && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {tags.map((tag, i) => (
+              <View key={i} style={{
+                backgroundColor: colors.primaryLight,
+                paddingVertical: 3, paddingHorizontal: 8,
+                borderRadius: radius.full,
+              }}>
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.primaryDark }}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
 
-      <TextInput
-        value={memo}
-        onChangeText={setMemo}
-        placeholder="메모 (선택)"
-        multiline
-        style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12, minHeight: 90 }}
-      />
+      {/* 메모 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>메모</Text>
+        <TextInput
+          value={memo}
+          onChangeText={setMemo}
+          placeholder="간단한 메모를 남겨보세요"
+          placeholderTextColor={colors.textTertiary}
+          multiline
+          style={{ ...inputStyle, minHeight: 90, textAlignVertical: "top" }}
+        />
+      </View>
 
-      <View style={{ gap: 8, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: "#eee" }}>
-        <Text style={{ fontWeight: "900" }}>내 초기 평점 (0.1 단위)</Text>
-        <Text style={{ opacity: 0.7 }}>0점이면 저장하지 않습니다.</Text>
+      {/* 초기 평점 */}
+      <View style={{
+        backgroundColor: colors.white, borderRadius: radius.lg,
+        padding: spacing.lg, gap: spacing.md,
+        borderWidth: 1, borderColor: colors.border,
+      }}>
+        <View>
+          <Text style={{ ...typography.label }}>초기 평점</Text>
+          <Text style={{ ...typography.caption, marginTop: 2 }}>0점이면 저장하지 않아요</Text>
+        </View>
 
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.md }}>
           <Pressable
             onPress={() => inc(-0.1)}
-            style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: "#ddd" }}
+            style={{
+              width: 44, height: 44, borderRadius: radius.full,
+              backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border,
+              alignItems: "center", justifyContent: "center",
+            }}
           >
-            <Text style={{ fontWeight: "900" }}>-0.1</Text>
+            <Text style={{ fontWeight: "700", fontSize: 16, color: colors.text }}>−</Text>
           </Pressable>
 
-          <Text style={{ fontSize: 18, fontWeight: "900", minWidth: 70, textAlign: "center" }}>
-            {initialRating.toFixed(1)}
+          <Text style={{ fontSize: 32, fontWeight: "900", color: colors.text, minWidth: 80, textAlign: "center" }}>
+            {initialRatingText}
           </Text>
 
           <Pressable
             onPress={() => inc(0.1)}
-            style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: "#ddd" }}
+            style={{
+              width: 44, height: 44, borderRadius: radius.full,
+              backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border,
+              alignItems: "center", justifyContent: "center",
+            }}
           >
-            <Text style={{ fontWeight: "900" }}>+0.1</Text>
+            <Text style={{ fontWeight: "700", fontSize: 16, color: colors.text }}>+</Text>
           </Pressable>
         </View>
 
         <TextInput
-          value={String(initialRating)}
-          onChangeText={(t) => setInitialRating(round1(clamp(parseDecimal(t), 0, 5)))}
+          value={initialRatingText}
+          onChangeText={(t) => {
+            setInitialRatingText(t);
+            const n = parseDecimal(t);
+            if (Number.isFinite(n)) {
+              setInitialRating(round1(clamp(n, 0, 5)));
+            }
+          }}
           keyboardType="numeric"
           placeholder="직접 입력 (예: 4.3)"
-          style={{ borderWidth: 1, borderColor: "#eee", borderRadius: 12, padding: 12 }}
+          placeholderTextColor={colors.textTertiary}
+          style={{ ...inputStyle, textAlign: "center" }}
         />
+
+        {/* 한줄평 */}
+        <TextInput
+          value={initialComment}
+          onChangeText={setInitialComment}
+          placeholder="한줄평을 남겨보세요 (선택)"
+          placeholderTextColor={colors.textTertiary}
+          maxLength={100}
+          style={inputStyle}
+        />
+        <Text style={{ ...typography.caption, textAlign: "right", marginTop: -spacing.sm }}>
+          {initialComment.length}/100
+        </Text>
       </View>
 
+      {/* 저장 버튼 */}
       <Pressable
         onPress={onCreate}
         disabled={saving}
         style={{
-          backgroundColor: "black",
-          padding: 14,
-          borderRadius: 12,
+          backgroundColor: colors.primary,
+          padding: spacing.lg,
+          borderRadius: radius.lg,
           opacity: saving ? 0.6 : 1,
-          marginTop: 6,
+          alignItems: "center",
+          flexDirection: "row",
+          justifyContent: "center",
+          gap: spacing.sm,
         }}
       >
-        {saving ? (
-          <View style={{ flexDirection: "row", justifyContent: "center", gap: 10 }}>
-            <ActivityIndicator />
-            <Text style={{ color: "white", fontWeight: "900" }}>저장 중...</Text>
-          </View>
-        ) : (
-          <Text style={{ color: "white", textAlign: "center", fontWeight: "900" }}>저장</Text>
-        )}
+        {saving && <ActivityIndicator color={colors.white} />}
+        <Text style={{ color: colors.white, fontWeight: "800", fontSize: 16 }}>
+          {saving ? "저장 중..." : "저장"}
+        </Text>
       </Pressable>
     </ScrollView>
   );

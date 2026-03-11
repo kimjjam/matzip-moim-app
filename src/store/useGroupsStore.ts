@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabase";
-import type { Group, GroupMember, Place, Rating } from "../types";
+import type { Group, GroupMember, Place, PlaceRating, Rating } from "../types";
 
 const nowIso = () => new Date().toISOString();
 const clampRating = (n: number) => Math.min(5, Math.max(0, n));
@@ -9,7 +9,7 @@ type AddPlaceInput = {
   name: string;
   tags: string[];
   memo?: string;
-  createdBy: string; // auth.uid
+  createdBy: string;
   rating?: Rating;
 };
 
@@ -19,10 +19,12 @@ type GroupsState = {
 
   loadGroups: () => Promise<void>;
   createGroup: (name: string) => Promise<string>;
+  updateGroupName: (groupId: string, name: string) => Promise<void>;
+  deleteGroup: (groupId: string) => Promise<void>;
+  deletePlace: (placeId: string, groupId: string) => Promise<void>;
   joinByInviteCode: (code: string) => Promise<void>;
   createInviteCode: (groupId: string) => Promise<string>;
   removeMember: (groupId: string, userId: string) => Promise<void>;
-
   addPlace: (groupId: string, place: AddPlaceInput) => Promise<string>;
   ratePlace: (placeId: string, userId: string, value: Rating) => Promise<void>;
 };
@@ -52,7 +54,7 @@ async function fetchMyRole(groupId: string, uid: string) {
 async function fetchMembers(groupId: string): Promise<GroupMember[]> {
   const { data, error } = await supabase
     .from("group_members")
-    .select("user_id, role, profiles:profiles(nickname)")
+    .select("user_id, role, profiles(nickname)")
     .eq("group_id", groupId);
 
   if (error) throw error;
@@ -67,7 +69,19 @@ async function fetchMembers(groupId: string): Promise<GroupMember[]> {
 async function fetchPlacesSummary(groupId: string): Promise<Place[]> {
   const { data, error } = await supabase
     .from("places")
-    .select("id, name")
+    .select(`
+      id,
+      name,
+      tags,
+      memo,
+      created_by,
+      visited_at,
+      place_ratings (
+        user_id,
+        value,
+        rated_at
+      )
+    `)
     .eq("group_id", groupId)
     .order("created_at", { ascending: false });
 
@@ -76,11 +90,15 @@ async function fetchPlacesSummary(groupId: string): Promise<Place[]> {
   return (data ?? []).map((p: any) => ({
     id: p.id,
     name: p.name ?? "",
-    tags: [],
-    memo: "",
-    visitedAt: nowIso(),
-    createdBy: "",
-    ratings: [],
+    tags: p.tags ?? [],
+    memo: p.memo ?? "",
+    visitedAt: p.visited_at ?? nowIso(),
+    createdBy: p.created_by ?? "",
+    ratings: (p.place_ratings ?? []).map((r: any) => ({
+      userId: r.user_id,
+      value: Number(r.value),
+      ratedAt: r.rated_at,
+    })) as PlaceRating[],
   }));
 }
 
@@ -164,17 +182,105 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     return g.id as string;
   },
 
+  updateGroupName: async (groupId: string, name: string) => {
+    const uid = await getMyUid();
+    if (!uid) throw new Error("로그인이 필요합니다.");
+
+    const myRole = await fetchMyRole(groupId, uid);
+    if (myRole !== "admin") throw new Error("모임 이름 수정은 관리자만 가능합니다.");
+
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("모임 이름을 입력해주세요.");
+
+    const { error } = await supabase
+      .from("groups")
+      .update({ name: trimmed })
+      .eq("id", groupId);
+
+    if (error) throw error;
+
+    await get().loadGroups();
+  },
+
+  deleteGroup: async (groupId: string) => {
+    const uid = await getMyUid();
+    if (!uid) throw new Error("로그인이 필요합니다.");
+
+    const myRole = await fetchMyRole(groupId, uid);
+    if (myRole !== "admin") throw new Error("모임 삭제는 관리자만 가능합니다.");
+
+    const { error: rErr } = await supabase
+      .from("place_ratings")
+      .delete()
+      .in(
+        "place_id",
+        (await supabase.from("places").select("id").eq("group_id", groupId))
+          .data?.map((p: any) => p.id) ?? []
+      );
+    if (rErr) throw rErr;
+
+    const { error: pErr } = await supabase
+      .from("places")
+      .delete()
+      .eq("group_id", groupId);
+    if (pErr) throw pErr;
+
+    const { error: memErr } = await supabase
+      .from("group_members")
+      .delete()
+      .eq("group_id", groupId);
+    if (memErr) throw memErr;
+
+    const { error } = await supabase
+      .from("groups")
+      .delete()
+      .eq("id", groupId);
+    if (error) throw error;
+
+    await get().loadGroups();
+  },
+
+  deletePlace: async (placeId: string, groupId: string) => {
+    const uid = await getMyUid();
+    if (!uid) throw new Error("로그인이 필요합니다.");
+
+    const myRole = await fetchMyRole(groupId, uid);
+    if (myRole !== "admin") throw new Error("맛집 삭제는 관리자만 가능합니다.");
+
+    const { error: rErr } = await supabase
+      .from("place_ratings")
+      .delete()
+      .eq("place_id", placeId);
+    if (rErr) throw rErr;
+
+    const { error } = await supabase
+      .from("places")
+      .delete()
+      .eq("id", placeId);
+    if (error) throw error;
+
+    await get().loadGroups();
+  },
+
   joinByInviteCode: async (code: string) => {
     const uid = await getMyUid();
     if (!uid) throw new Error("로그인이 필요합니다.");
 
-    const groupId = code.trim();
-    if (!groupId) throw new Error("초대코드를 입력해주세요.");
+    const trimmed = code.trim();
+    if (!trimmed) throw new Error("초대코드를 입력해주세요.");
+
+    const { data: groupExists, error: gErr } = await supabase
+      .from("groups")
+      .select("id")
+      .eq("id", trimmed)
+      .single();
+
+    if (gErr || !groupExists) throw new Error("유효하지 않은 초대코드입니다.");
 
     const { error } = await supabase
       .from("group_members")
       .upsert(
-        { group_id: groupId, user_id: uid, role: "member" },
+        { group_id: trimmed, user_id: uid, role: "member" },
         { onConflict: "group_id,user_id" }
       );
 
@@ -190,7 +296,6 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const myRole = await fetchMyRole(groupId, uid);
     if (myRole !== "admin") throw new Error("초대코드 생성은 관리자만 가능합니다.");
 
-    // 일단 1차 버전은 groupId 자체를 초대코드로 사용
     return groupId;
   },
 
@@ -222,7 +327,7 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
         group_id: groupId,
         name: trimmedName,
         tags: place.tags ?? [],
-        memo: (place.memo ?? "").trim(),
+        memo: (place.memo ?? "").trim() || null,
         created_by: place.createdBy,
         visited_at: nowIso(),
       })
@@ -234,11 +339,7 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const r = typeof place.rating === "number" ? clampRating(place.rating) : 0;
     if (r > 0) {
       const { error: rErr } = await supabase.from("place_ratings").upsert(
-        {
-          place_id: created.id,
-          user_id: place.createdBy,
-          rating: r,
-        },
+        { place_id: created.id, user_id: place.createdBy, value: r },
         { onConflict: "place_id,user_id" }
       );
       if (rErr) throw rErr;
@@ -252,10 +353,12 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const r = clampRating(value);
 
     const { error } = await supabase.from("place_ratings").upsert(
-      { place_id: placeId, user_id: userId, rating: r },
+      { place_id: placeId, user_id: userId, value: r },
       { onConflict: "place_id,user_id" }
     );
 
     if (error) throw error;
+
+    await get().loadGroups();
   },
 }));
