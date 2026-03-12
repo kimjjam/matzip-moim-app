@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, Pressable, Alert, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, Pressable, Alert, ActivityIndicator, ScrollView } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAuthStore } from "../store/useAuthStore";
+import { colors, radius, spacing, typography } from "../theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Signup">;
 
@@ -12,7 +13,6 @@ export default function SignupScreen({ navigation }: Props) {
   const [nickname, setNickname] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
 
   const onSignup = async () => {
@@ -26,14 +26,11 @@ export default function SignupScreen({ navigation }: Props) {
 
     try {
       setLoading(true);
-
       const { needsEmailConfirm } = await signup(e, password, n);
-
       if (needsEmailConfirm) {
-        // ✅ 안내 화면으로 이동
         navigation.replace("ConfirmEmail", { email: e });
       } else {
-        navigation.replace("Groups");
+        navigation.replace("MainTabs");
       }
     } catch (err: any) {
       Alert.alert("회원가입 실패", err?.message ?? "회원가입에 실패했습니다.");
@@ -42,59 +39,101 @@ export default function SignupScreen({ navigation }: Props) {
     }
   };
 
+  const inputStyle = {
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    fontSize: 15,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+  };
+
   return (
-    <View style={{ flex: 1, padding: 20, justifyContent: "center", gap: 12 }}>
-      <Text style={{ fontSize: 26, fontWeight: "900" }}>회원가입</Text>
-      <Text style={{ opacity: 0.7 }}>닉네임은 모임/평점에서 표시됩니다.</Text>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.background }}
+      contentContainerStyle={{ padding: spacing.xl, justifyContent: "center", gap: spacing.md, flexGrow: 1 }}
+      keyboardShouldPersistTaps="handled"
+    >
+      {/* 헤더 */}
+      <View style={{ marginBottom: spacing.md }}>
+        <Text style={{ fontSize: 32, fontWeight: "900", color: colors.text }}>🍽️ 회원가입</Text>
+        <Text style={{ ...typography.caption, marginTop: 6 }}>
+          닉네임은 모임과 평점에서 표시돼요
+        </Text>
+      </View>
 
-      <TextInput
-        value={nickname}
-        onChangeText={setNickname}
-        placeholder="닉네임 (예: 재원)"
-        autoCapitalize="none"
-        style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12 }}
-      />
+      {/* 닉네임 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>닉네임 <Text style={{ color: colors.danger }}>*</Text></Text>
+        <TextInput
+          value={nickname}
+          onChangeText={setNickname}
+          placeholder="예: 재원"
+          autoCapitalize="none"
+          placeholderTextColor={colors.textTertiary}
+          style={inputStyle}
+        />
+      </View>
 
-      <TextInput
-        value={email}
-        onChangeText={setEmail}
-        placeholder="이메일"
-        autoCapitalize="none"
-        keyboardType="email-address"
-        style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12 }}
-      />
+      {/* 이메일 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>이메일 <Text style={{ color: colors.danger }}>*</Text></Text>
+        <TextInput
+          value={email}
+          onChangeText={setEmail}
+          placeholder="example@email.com"
+          autoCapitalize="none"
+          keyboardType="email-address"
+          placeholderTextColor={colors.textTertiary}
+          style={inputStyle}
+        />
+      </View>
 
-      <TextInput
-        value={password}
-        onChangeText={setPassword}
-        placeholder="비밀번호"
-        secureTextEntry
-        style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12 }}
-      />
+      {/* 비밀번호 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>비밀번호 <Text style={{ color: colors.danger }}>*</Text></Text>
+        <TextInput
+          value={password}
+          onChangeText={setPassword}
+          placeholder="6자 이상 입력해주세요"
+          secureTextEntry
+          placeholderTextColor={colors.textTertiary}
+          style={inputStyle}
+        />
+      </View>
 
+      {/* 가입 버튼 */}
       <Pressable
         onPress={onSignup}
         disabled={loading}
         style={{
-          backgroundColor: "black",
-          padding: 14,
-          borderRadius: 12,
+          backgroundColor: colors.primary,
+          padding: spacing.lg,
+          borderRadius: radius.lg,
           opacity: loading ? 0.6 : 1,
           alignItems: "center",
           flexDirection: "row",
           justifyContent: "center",
-          gap: 8,
+          gap: spacing.sm,
+          marginTop: spacing.sm,
         }}
       >
-        {loading && <ActivityIndicator />}
-        <Text style={{ color: "white", textAlign: "center", fontWeight: "900" }}>
-          가입하기
+        {loading && <ActivityIndicator color={colors.white} />}
+        <Text style={{ color: colors.white, fontWeight: "800", fontSize: 16 }}>
+          {loading ? "가입 중..." : "가입하기"}
         </Text>
       </Pressable>
 
-      <Pressable onPress={() => navigation.replace("Login")} style={{ padding: 12, borderRadius: 12 }}>
-        <Text style={{ textAlign: "center", fontWeight: "900" }}>로그인으로 돌아가기</Text>
+      {/* 로그인으로 */}
+      <Pressable
+        onPress={() => navigation.replace("Login")}
+        style={{ padding: spacing.md, borderRadius: radius.lg, alignItems: "center" }}
+      >
+        <Text style={{ fontWeight: "700", color: colors.textSecondary }}>
+          이미 계정이 있으신가요? <Text style={{ color: colors.primary }}>로그인</Text>
+        </Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
