@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabase";
+import { sendPushToGroupMembers } from "../lib/notifications";
 import type { Group, GroupMember, Place, PlaceRating, Rating } from "../types";
 
 const nowIso = () => new Date().toISOString();
@@ -11,6 +12,8 @@ type AddPlaceInput = {
   memo?: string;
   createdBy: string;
   rating?: Rating;
+  visitedAt?: string;
+  isVisited?: boolean;
 };
 
 type GroupsState = {
@@ -29,6 +32,7 @@ type GroupsState = {
   ratePlace: (placeId: string, userId: string, value: Rating) => Promise<void>;
   toggleFavorite: (groupId: string) => Promise<void>;
   reorderGroups: (groupIds: string[]) => Promise<void>;
+  toggleVisited: (placeId: string, groupId: string, isVisited: boolean) => Promise<void>;
 };
 
 async function getMyUid() {
@@ -88,6 +92,7 @@ async function fetchPlacesSummary(groupId: string): Promise<Place[]> {
       memo,
       created_by,
       visited_at,
+      is_visited,
       place_ratings (
         user_id,
         value,
@@ -106,6 +111,7 @@ async function fetchPlacesSummary(groupId: string): Promise<Place[]> {
     memo: p.memo ?? "",
     visitedAt: p.visited_at ?? nowIso(),
     createdBy: p.created_by ?? "",
+    isVisited: p.is_visited ?? true,
     ratings: (p.place_ratings ?? []).map((r: any) => ({
       userId: r.user_id,
       value: Number(r.value),
@@ -163,7 +169,6 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
         });
       }
 
-      // 즐겨찾기 먼저, 그 다음 sort_order 순
       result.sort((a, b) => {
         if (a.isFavorite && !b.isFavorite) return -1;
         if (!a.isFavorite && b.isFavorite) return 1;
@@ -322,9 +327,6 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const uid = await getMyUid();
     if (!uid) throw new Error("로그인이 필요합니다.");
 
-    const myRole = await fetchMyRole(groupId, uid);
-    if (myRole !== "admin") throw new Error("초대코드 생성은 관리자만 가능합니다.");
-
     const code = Math.random().toString(36).substring(2, 10).toUpperCase();
 
     const expiresAt = new Date();
@@ -367,7 +369,6 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const group = get().groups.find((g) => g.id === groupId);
     const newFav = !(group?.isFavorite ?? false);
 
-    // 낙관적 업데이트 (UI 즉시 반영)
     set((state) => ({
       groups: state.groups
         .map((g) => g.id === groupId ? { ...g, isFavorite: newFav } : g)
@@ -385,7 +386,7 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
       .eq("user_id", uid);
 
     if (error) {
-      await get().loadGroups(); // 실패시 롤백
+      await get().loadGroups();
       throw error;
     }
   },
@@ -394,7 +395,6 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const uid = await getMyUid();
     if (!uid) throw new Error("로그인이 필요합니다.");
 
-    // 낙관적 업데이트
     set((state) => {
       const reordered = groupIds
         .map((id, index) => {
@@ -405,7 +405,6 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
       return { groups: reordered };
     });
 
-    // DB 업데이트
     await Promise.all(
       groupIds.map((groupId, index) =>
         supabase
@@ -415,6 +414,31 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
           .eq("user_id", uid)
       )
     );
+  },
+
+  toggleVisited: async (placeId: string, groupId: string, isVisited: boolean) => {
+    set((state) => ({
+      groups: state.groups.map((g) =>
+        g.id === groupId
+          ? {
+              ...g,
+              places: g.places.map((p) =>
+                p.id === placeId ? { ...p, isVisited } : p
+              ),
+            }
+          : g
+      ),
+    }));
+
+    const { error } = await supabase
+      .from("places")
+      .update({ is_visited: isVisited })
+      .eq("id", placeId);
+
+    if (error) {
+      await get().loadGroups();
+      throw error;
+    }
   },
 
   addPlace: async (groupId: string, place: AddPlaceInput) => {
@@ -429,7 +453,8 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
         tags: place.tags ?? [],
         memo: (place.memo ?? "").trim() || null,
         created_by: place.createdBy,
-        visited_at: nowIso(),
+        visited_at: place.visitedAt ?? nowIso(),
+        is_visited: place.isVisited ?? true,
       })
       .select("id")
       .single();
@@ -445,6 +470,17 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
       if (rErr) throw rErr;
     }
 
+    // 맛집 추가 알림
+    const { data: profile } = await supabase
+      .from("profiles").select("nickname").eq("id", place.createdBy).single();
+    const myNick = profile?.nickname ?? "누군가";
+    await sendPushToGroupMembers(
+      groupId,
+      place.createdBy,
+      "🍽️ 새 맛집 추가!",
+      `${myNick}님이 "${trimmedName}"을 추가했어요`
+    );
+
     await get().loadGroups();
     return created.id as string;
   },
@@ -458,6 +494,21 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     );
 
     if (error) throw error;
+
+    // 평점 알림
+    const { data: placeData } = await supabase
+      .from("places").select("name, group_id").eq("id", placeId).single();
+    const { data: profile } = await supabase
+      .from("profiles").select("nickname").eq("id", userId).single();
+    const myNick = profile?.nickname ?? "누군가";
+    if (placeData) {
+      await sendPushToGroupMembers(
+        placeData.group_id,
+        userId,
+        "⭐ 새 평점!",
+        `${myNick}님이 "${placeData.name}"에 ${value}점을 남겼어요`
+      );
+    }
 
     await get().loadGroups();
   },

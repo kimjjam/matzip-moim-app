@@ -3,10 +3,15 @@ import {
   View, Text, TextInput, Pressable,
   Alert, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
 } from "react-native";
+import * as WebBrowser from "expo-web-browser";
+import * as AuthSession from "expo-auth-session";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useAuthStore } from "../store/useAuthStore";
+import { supabase } from "../lib/supabase";
 import { colors, radius, spacing, typography } from "../theme";
+
+WebBrowser.maybeCompleteAuthSession();
 
 type Props = NativeStackScreenProps<RootStackParamList, "Login">;
 
@@ -17,6 +22,7 @@ export default function LoginScreen({ navigation, route }: Props) {
   const [email, setEmail] = useState(route.params?.prefillEmail ?? "");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -40,12 +46,67 @@ export default function LoginScreen({ navigation, route }: Props) {
     }
   };
 
+  const onGoogleLogin = async () => {
+  try {
+    setGoogleLoading(true);
+    const redirectUrl = AuthSession.makeRedirectUri({ 
+      scheme: "matzipmoimapp",
+      path: "auth/callback",
+    });
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: redirectUrl,
+        skipBrowserRedirect: true,
+      },
+    });
+
+    if (error) throw error;
+    if (!data.url) throw new Error("구글 로그인 URL을 가져오지 못했습니다.");
+
+    const result = await WebBrowser.openAuthSessionAsync(
+      data.url, 
+      redirectUrl,
+      { showInRecents: true }
+    );
+
+    console.log("result:", JSON.stringify(result));
+
+    if (result.type === "success" && result.url) {
+      const fragment = result.url.split("#")[1] ?? "";
+      const params = new URLSearchParams(fragment);
+      const at = params.get("access_token");
+      const rt = params.get("refresh_token");
+
+      if (at && rt) {
+        await supabase.auth.setSession({ access_token: at, refresh_token: rt });
+      } else {
+        const url = new URL(result.url);
+        const at2 = url.searchParams.get("access_token");
+        const rt2 = url.searchParams.get("refresh_token");
+        if (at2 && rt2) {
+          await supabase.auth.setSession({ access_token: at2, refresh_token: rt2 });
+        }
+      }
+    } else {
+      console.log("result type:", result.type);
+    }
+  } catch (err: any) {
+    Alert.alert("구글 로그인 실패", err?.message ?? "다시 시도해주세요.");
+  } finally {
+    setGoogleLoading(false);
+  }
+};
+
   const inputStyle = {
     backgroundColor: colors.background,
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 15,
     color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
   };
 
   return (
@@ -57,20 +118,10 @@ export default function LoginScreen({ navigation, route }: Props) {
 
         {/* 로고 */}
         <View style={{ alignItems: "center", marginBottom: 48 }}>
-          <View style={{
-            width: 88, height: 88, borderRadius: radius.xl,
-            backgroundColor: colors.primaryLight,
-            alignItems: "center", justifyContent: "center",
-            marginBottom: 16,
-            shadowColor: colors.primary,
-            shadowOpacity: 0.3,
-            shadowRadius: 12,
-            elevation: 4,
-          }}>
-            <Text style={{ fontSize: 40 }}>🍽️</Text>
-          </View>
-          <Text style={{ fontSize: 30, fontWeight: "900", color: colors.text, letterSpacing: -0.5 }}>MZ모임</Text>
-          <Text style={{ ...typography.caption, marginTop: 6 }}>함께 찾는 우리만의 맛집</Text>
+          <Text style={{ fontSize: 36, fontWeight: "900", color: colors.text, letterSpacing: -1 }}>
+            MZ모임
+          </Text>
+          <Text style={{ ...typography.caption, marginTop: 8 }}>함께 찾는 우리만의 맛집</Text>
         </View>
 
         {/* 입력 카드 */}
@@ -80,9 +131,9 @@ export default function LoginScreen({ navigation, route }: Props) {
           padding: spacing.xl,
           gap: spacing.md,
           shadowColor: "#000",
-          shadowOpacity: 0.06,
+          shadowOpacity: 0.05,
           shadowRadius: 16,
-          elevation: 3,
+          elevation: 2,
         }}>
           <TextInput
             value={email}
@@ -123,6 +174,35 @@ export default function LoginScreen({ navigation, route }: Props) {
             <Text style={{ color: colors.white, fontWeight: "800", fontSize: 16 }}>로그인</Text>
           </Pressable>
 
+          {/* 구분선 + 소셜 로그인 */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginVertical: 4 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+            <Text style={{ fontSize: 12, color: colors.textTertiary, fontWeight: "600" }}>소셜 로그인</Text>
+            <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+          </View>
+
+          {/* 소셜 버튼들 */}
+          <View style={{ flexDirection: "row", justifyContent: "center", gap: spacing.lg }}>
+            {/* 구글 */}
+            <Pressable
+              onPress={onGoogleLogin}
+              disabled={googleLoading}
+              style={{
+                width: 52, height: 52, borderRadius: radius.full,
+                backgroundColor: colors.white,
+                borderWidth: 1.5, borderColor: colors.border,
+                alignItems: "center", justifyContent: "center",
+                shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 8, elevation: 2,
+                opacity: googleLoading ? 0.7 : 1,
+              }}
+            >
+              {googleLoading
+                ? <ActivityIndicator color={colors.textSecondary} size="small" />
+                : <Text style={{ fontSize: 22, fontWeight: "900", color: "#4285F4" }}>G</Text>
+              }
+            </Pressable>
+          </View>
+
           {/* 비밀번호 찾기 */}
           <Pressable onPress={() => navigation.navigate("ResetPassword")}>
             <Text style={{ textAlign: "center", color: colors.textSecondary, fontWeight: "600", fontSize: 13 }}>
@@ -131,7 +211,7 @@ export default function LoginScreen({ navigation, route }: Props) {
           </Pressable>
         </View>
 
-        {/* 하단 링크들 */}
+        {/* 하단 링크 */}
         <View style={{ marginTop: spacing.xl, gap: spacing.sm }}>
           <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6 }}>
             <Text style={{ color: colors.textTertiary, fontSize: 14 }}>아직 계정이 없으신가요?</Text>

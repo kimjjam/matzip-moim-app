@@ -14,6 +14,7 @@ export type Place = {
   visitedAt: string;
   createdBy: string;
   ratings: PlaceRating[];
+  isVisited: boolean;
 };
 
 export type GroupMember = {

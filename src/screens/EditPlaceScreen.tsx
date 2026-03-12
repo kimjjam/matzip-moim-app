@@ -10,6 +10,10 @@ import { colors, radius, spacing, typography } from "../theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditPlace">;
 
+const MINT = "#A8DAC5";
+const MINT_DARK = "#7BBFAA";
+const MINT_BG = "#E8F5F0";
+
 function todayString() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -39,6 +43,7 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
   const [tagsText, setTagsText] = useState("");
   const [memo, setMemo] = useState("");
   const [visitedAt, setVisitedAt] = useState(todayString());
+  const [isVisited, setIsVisited] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -56,6 +61,7 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
         setTagsText((data.tags ?? []).join(", "));
         setMemo(data.memo ?? "");
         setVisitedAt(toDateString(data.visited_at));
+        setIsVisited(data.is_visited ?? true);
       } catch (e: any) {
         Alert.alert("오류", e?.message ?? "불러오기에 실패했습니다.");
         navigation.goBack();
@@ -72,7 +78,7 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
       Alert.alert("확인", "맛집 이름을 입력해주세요.");
       return;
     }
-    if (!isValidDate(visitedAt)) {
+    if (isVisited && !isValidDate(visitedAt)) {
       Alert.alert("확인", "방문일을 YYYY-MM-DD 형식으로 입력해주세요.");
       return;
     }
@@ -84,7 +90,8 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
           name: trimmed,
           tags,
           memo: memo.trim() || null,
-          visited_at: new Date(visitedAt).toISOString(),
+          visited_at: isVisited ? new Date(visitedAt).toISOString() : new Date().toISOString(),
+          is_visited: isVisited,
         })
         .eq("id", placeId);
       if (error) throw error;
@@ -137,36 +144,75 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
         />
       </View>
 
-      {/* 방문일 */}
+      {/* 방문 상태 선택 */}
       <View style={{ gap: spacing.sm }}>
-        <Text style={{ ...typography.label }}>방문일 <Text style={{ color: colors.danger }}>*</Text></Text>
+        <Text style={{ ...typography.label }}>방문 상태</Text>
         <View style={{ flexDirection: "row", gap: spacing.sm }}>
-          <TextInput
-            value={visitedAt}
-            onChangeText={setVisitedAt}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={colors.textTertiary}
-            keyboardType="numeric"
-            maxLength={10}
-            style={{ ...inputStyle, flex: 1 }}
-          />
           <Pressable
-            onPress={() => setVisitedAt(todayString())}
+            onPress={() => setIsVisited(true)}
             style={{
-              paddingHorizontal: spacing.md,
-              backgroundColor: colors.primaryLight,
-              borderRadius: radius.md,
-              alignItems: "center", justifyContent: "center",
-              borderWidth: 1, borderColor: colors.primary,
+              flex: 1, padding: spacing.md, borderRadius: radius.lg,
+              alignItems: "center",
+              backgroundColor: isVisited ? MINT_BG : colors.card,
+              borderWidth: 1.5,
+              borderColor: isVisited ? MINT : colors.border,
             }}
           >
-            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primaryDark }}>오늘</Text>
+            <Text style={{ fontSize: 20 }}>✅</Text>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: isVisited ? MINT_DARK : colors.textSecondary, marginTop: 4 }}>
+              방문완료
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setIsVisited(false)}
+            style={{
+              flex: 1, padding: spacing.md, borderRadius: radius.lg,
+              alignItems: "center",
+              backgroundColor: !isVisited ? "#FFFBEA" : colors.card,
+              borderWidth: 1.5,
+              borderColor: !isVisited ? "#FFB800" : colors.border,
+            }}
+          >
+            <Text style={{ fontSize: 20 }}>📌</Text>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: !isVisited ? "#F0A500" : colors.textSecondary, marginTop: 4 }}>
+              방문예정
+            </Text>
           </Pressable>
         </View>
-        {visitedAt.length === 10 && !isValidDate(visitedAt) && (
-          <Text style={{ fontSize: 12, color: colors.danger }}>날짜 형식이 올바르지 않아요 (YYYY-MM-DD)</Text>
-        )}
       </View>
+
+      {/* 방문일 (방문완료일 때만) */}
+      {isVisited && (
+        <View style={{ gap: spacing.sm }}>
+          <Text style={{ ...typography.label }}>방문일 <Text style={{ color: colors.danger }}>*</Text></Text>
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <TextInput
+              value={visitedAt}
+              onChangeText={setVisitedAt}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.textTertiary}
+              keyboardType="numeric"
+              maxLength={10}
+              style={{ ...inputStyle, flex: 1 }}
+            />
+            <Pressable
+              onPress={() => setVisitedAt(todayString())}
+              style={{
+                paddingHorizontal: spacing.md,
+                backgroundColor: colors.primaryLight,
+                borderRadius: radius.md,
+                alignItems: "center", justifyContent: "center",
+                borderWidth: 1, borderColor: colors.primary,
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primaryDark }}>오늘</Text>
+            </Pressable>
+          </View>
+          {visitedAt.length === 10 && !isValidDate(visitedAt) && (
+            <Text style={{ fontSize: 12, color: colors.danger }}>날짜 형식이 올바르지 않아요 (YYYY-MM-DD)</Text>
+          )}
+        </View>
+      )}
 
       {/* 태그 */}
       <View style={{ gap: spacing.sm }}>

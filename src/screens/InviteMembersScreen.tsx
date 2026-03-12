@@ -3,6 +3,7 @@ import {
   View, Text, Pressable, Alert, Share, ScrollView,
   Modal, ActivityIndicator,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { useGroupsStore } from "../store/useGroupsStore";
@@ -24,18 +25,23 @@ export default function InviteMembersScreen({ route }: Props) {
   const groups = useGroupsStore((s) => s.groups);
   const createInviteCode = useGroupsStore((s) => s.createInviteCode);
   const removeMember = useGroupsStore((s) => s.removeMember);
+  const loadGroups = useGroupsStore((s) => s.loadGroups);
 
   const group = useMemo(() => groups.find((g) => g.id === groupId), [groups, groupId]);
   const [code, setCode] = useState<string>("");
   const [making, setMaking] = useState(false);
 
-  // 히스토리 모달
   const [historyModal, setHistoryModal] = useState(false);
   const [historyNickname, setHistoryNickname] = useState("");
   const [historyList, setHistoryList] = useState<RatingHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   const isAdmin = group?.myRole === "admin";
+
+  useEffect(() => {
+    setCode("");
+    loadGroups();
+  }, [groupId]);
 
   const onMakeCode = async () => {
     try {
@@ -57,6 +63,15 @@ export default function InviteMembersScreen({ route }: Props) {
     await Share.share({
       message: `[${groupName}] 초대코드: ${code}\n앱에서 '초대코드로 참가'에 입력하면 됩니다.`,
     });
+  };
+
+  const onCopy = async () => {
+    if (!code) {
+      Alert.alert("안내", "먼저 초대코드를 생성해주세요.");
+      return;
+    }
+    await Clipboard.setStringAsync(code);
+    Alert.alert("복사 완료", "초대코드가 클립보드에 복사됐어요! 📋");
   };
 
   const onKick = async (userId: string) => {
@@ -82,7 +97,6 @@ export default function InviteMembersScreen({ route }: Props) {
     setHistoryModal(true);
     setHistoryLoading(true);
     try {
-      // 이 모임의 맛집 id 목록
       const placeIds = (group?.places ?? []).map((p) => p.id);
       if (placeIds.length === 0) {
         setHistoryList([]);
@@ -116,10 +130,6 @@ export default function InviteMembersScreen({ route }: Props) {
     }
   };
 
-  useEffect(() => {
-    setCode("");
-  }, [groupId]);
-
   const renderStars = (value: number) => {
     const full = Math.round(value);
     return "★".repeat(full) + "☆".repeat(5 - full);
@@ -146,7 +156,6 @@ export default function InviteMembersScreen({ route }: Props) {
             borderTopLeftRadius: 24, borderTopRightRadius: 24,
             padding: spacing.xl, maxHeight: "80%",
           }}>
-            {/* 모달 헤더 */}
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg }}>
               <View>
                 <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>
@@ -195,7 +204,6 @@ export default function InviteMembersScreen({ route }: Props) {
                           {formatDate(h.ratedAt)}
                         </Text>
                       </View>
-
                       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                         <Text style={{ fontSize: 14, color: "#FFB800" }}>
                           {renderStars(h.value)}
@@ -204,7 +212,6 @@ export default function InviteMembersScreen({ route }: Props) {
                           {h.value.toFixed(1)}
                         </Text>
                       </View>
-
                       {!!h.comment && (
                         <Text style={{ ...typography.body, color: colors.textSecondary }}>
                           "{h.comment}"
@@ -252,37 +259,42 @@ export default function InviteMembersScreen({ route }: Props) {
             </Text>
           </View>
 
-          {isAdmin && (
-            <Pressable
-              onPress={onMakeCode}
-              disabled={making}
-              style={{
-                backgroundColor: colors.primary, padding: spacing.md,
-                borderRadius: radius.lg, alignItems: "center",
-                opacity: making ? 0.6 : 1,
-              }}
-            >
-              <Text style={{ color: colors.white, fontWeight: "800" }}>
-                {making ? "생성 중..." : "초대코드 생성"}
-              </Text>
-            </Pressable>
-          )}
-
+          {/* 관리자/멤버 모두 초대코드 생성 가능 */}
           <Pressable
-            onPress={onShare}
+            onPress={onMakeCode}
+            disabled={making}
             style={{
-              padding: spacing.md, borderRadius: radius.lg,
-              alignItems: "center", borderWidth: 1, borderColor: colors.border,
+              backgroundColor: colors.primary, padding: spacing.md,
+              borderRadius: radius.lg, alignItems: "center",
+              opacity: making ? 0.6 : 1,
             }}
           >
-            <Text style={{ fontWeight: "700", color: colors.textSecondary }}>공유하기</Text>
+            <Text style={{ color: colors.white, fontWeight: "800" }}>
+              {making ? "생성 중..." : "초대코드 생성"}
+            </Text>
           </Pressable>
 
-          {!isAdmin && (
-            <Text style={{ ...typography.caption, textAlign: "center" }}>
-              ※ 초대코드 생성은 관리자만 가능해요
-            </Text>
-          )}
+          {/* 공유하기 + 복사하기 */}
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Pressable
+              onPress={onShare}
+              style={{
+                flex: 1, padding: spacing.md, borderRadius: radius.lg,
+                alignItems: "center", borderWidth: 1, borderColor: colors.border,
+              }}
+            >
+              <Text style={{ fontWeight: "700", color: colors.textSecondary }}>공유하기</Text>
+            </Pressable>
+            <Pressable
+              onPress={onCopy}
+              style={{
+                flex: 1, padding: spacing.md, borderRadius: radius.lg,
+                alignItems: "center", borderWidth: 1, borderColor: colors.border,
+              }}
+            >
+              <Text style={{ fontWeight: "700", color: colors.textSecondary }}>복사하기 📋</Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* 멤버 목록 */}
@@ -300,7 +312,6 @@ export default function InviteMembersScreen({ route }: Props) {
               key={m.userId}
               onPress={() => onOpenHistory(m.userId, label)}
               onLongPress={() => onKick(m.userId)}
-              disabled={false}
               style={{
                 backgroundColor: colors.card, borderRadius: radius.lg,
                 padding: spacing.lg,

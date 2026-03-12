@@ -22,7 +22,21 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.kimjjammin.matzipmoimapp"
+      "package": "com.kimjjammin.matzipmoimapp",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "matzipmoimapp",
+              "host": "auth",
+              "pathPrefix": "/callback"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -32,6 +46,9 @@
         "projectId": "5fa51518-1081-4640-a6c9-b0bbead876a1"
       }
     },
-    "owner": "kimjjammin"
+    "owner": "kimjjammin",
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }
