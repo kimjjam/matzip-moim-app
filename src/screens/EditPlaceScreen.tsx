@@ -10,12 +10,35 @@ import { colors, radius, spacing, typography } from "../theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "EditPlace">;
 
+function todayString() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function isValidDate(s: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s);
+  return !isNaN(d.getTime());
+}
+function toDateString(iso: string) {
+  if (!iso) return todayString();
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return todayString();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function EditPlaceScreen({ route, navigation }: Props) {
   const { groupId, placeId } = route.params;
 
   const [name, setName] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [memo, setMemo] = useState("");
+  const [visitedAt, setVisitedAt] = useState(todayString());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -32,6 +55,7 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
         setName(data.name ?? "");
         setTagsText((data.tags ?? []).join(", "));
         setMemo(data.memo ?? "");
+        setVisitedAt(toDateString(data.visited_at));
       } catch (e: any) {
         Alert.alert("오류", e?.message ?? "불러오기에 실패했습니다.");
         navigation.goBack();
@@ -48,11 +72,20 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
       Alert.alert("확인", "맛집 이름을 입력해주세요.");
       return;
     }
+    if (!isValidDate(visitedAt)) {
+      Alert.alert("확인", "방문일을 YYYY-MM-DD 형식으로 입력해주세요.");
+      return;
+    }
     try {
       setSaving(true);
       const { error } = await supabase
         .from("places")
-        .update({ name: trimmed, tags, memo: memo.trim() || null })
+        .update({
+          name: trimmed,
+          tags,
+          memo: memo.trim() || null,
+          visited_at: new Date(visitedAt).toISOString(),
+        })
         .eq("id", placeId);
       if (error) throw error;
       Alert.alert("완료", "맛집 정보가 수정됐어요!", [
@@ -102,6 +135,37 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
           placeholderTextColor={colors.textTertiary}
           style={inputStyle}
         />
+      </View>
+
+      {/* 방문일 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>방문일 <Text style={{ color: colors.danger }}>*</Text></Text>
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <TextInput
+            value={visitedAt}
+            onChangeText={setVisitedAt}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.textTertiary}
+            keyboardType="numeric"
+            maxLength={10}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <Pressable
+            onPress={() => setVisitedAt(todayString())}
+            style={{
+              paddingHorizontal: spacing.md,
+              backgroundColor: colors.primaryLight,
+              borderRadius: radius.md,
+              alignItems: "center", justifyContent: "center",
+              borderWidth: 1, borderColor: colors.primary,
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primaryDark }}>오늘</Text>
+          </Pressable>
+        </View>
+        {visitedAt.length === 10 && !isValidDate(visitedAt) && (
+          <Text style={{ fontSize: 12, color: colors.danger }}>날짜 형식이 올바르지 않아요 (YYYY-MM-DD)</Text>
+        )}
       </View>
 
       {/* 태그 */}
@@ -168,11 +232,8 @@ export default function EditPlaceScreen({ route, navigation }: Props) {
       <Pressable
         onPress={() => navigation.goBack()}
         style={{
-          padding: spacing.md,
-          borderRadius: radius.lg,
-          alignItems: "center",
-          borderWidth: 1,
-          borderColor: colors.border,
+          padding: spacing.md, borderRadius: radius.lg,
+          alignItems: "center", borderWidth: 1, borderColor: colors.border,
         }}
       >
         <Text style={{ fontWeight: "700", color: colors.textSecondary }}>취소</Text>

@@ -16,12 +16,14 @@ type Props = BottomTabScreenProps<TabParamList, "Groups">;
 
 const MINT = "#A8DAC5";
 const MINT_DARK = "#7BBFAA";
+const FAVORITE_BG = "#FFFBEA";
+const FAVORITE_BORDER = "#FFE082";
 
 export default function GroupScreen({ navigation }: Props) {
   const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
-  const { groups, loadGroups, loading, deleteGroup, updateGroupName } = useGroupsStore();
+  const { groups, loadGroups, loading, deleteGroup, updateGroupName, toggleFavorite, reorderGroups } = useGroupsStore();
 
   const [editingGroupId, setEditingGroupId] = React.useState<string | null>(null);
   const [editingName, setEditingName] = React.useState("");
@@ -57,6 +59,32 @@ export default function GroupScreen({ navigation }: Props) {
     } catch (e: any) {
       Alert.alert("실패", e?.message ?? "수정에 실패했습니다.");
     }
+  };
+
+  const onToggleFavorite = async (groupId: string) => {
+    try {
+      await toggleFavorite(groupId);
+    } catch (e: any) {
+      Alert.alert("실패", e?.message ?? "즐겨찾기 변경에 실패했습니다.");
+    }
+  };
+
+  const onMoveUp = async (index: number) => {
+    if (index === 0) return;
+    const newOrder = [...groups];
+    const temp = newOrder[index - 1];
+    newOrder[index - 1] = newOrder[index];
+    newOrder[index] = temp;
+    await reorderGroups(newOrder.map((g) => g.id));
+  };
+
+  const onMoveDown = async (index: number) => {
+    if (index === groups.length - 1) return;
+    const newOrder = [...groups];
+    const temp = newOrder[index + 1];
+    newOrder[index + 1] = newOrder[index];
+    newOrder[index] = temp;
+    await reorderGroups(newOrder.map((g) => g.id));
   };
 
   if (!user) return null;
@@ -122,43 +150,94 @@ export default function GroupScreen({ navigation }: Props) {
           </View>
         )}
 
-        {groups.map((g) => (
+        {groups.map((g, index) => (
           <View key={g.id} style={{
-            backgroundColor: colors.card, borderRadius: radius.lg,
-            overflow: "hidden", shadowColor: "#000",
+            backgroundColor: g.isFavorite ? FAVORITE_BG : colors.card,
+            borderRadius: radius.lg,
+            overflow: "hidden",
+            shadowColor: "#000",
             shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+            borderWidth: g.isFavorite ? 1.5 : 0,
+            borderColor: g.isFavorite ? FAVORITE_BORDER : "transparent",
           }}>
             <Pressable
               onPress={() => rootNavigation.navigate("Places", { groupId: g.id })}
               style={{ padding: spacing.lg }}
             >
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+
+                {/* 순서 변경 버튼 */}
+                <View style={{ gap: 2, marginRight: spacing.sm }}>
+                  <Pressable
+                    onPress={() => onMoveUp(index)}
+                    disabled={index === 0}
+                    style={{
+                      width: 18, height: 18, borderRadius: 4,
+                      backgroundColor: index === 0 ? colors.background : colors.primaryLight,
+                      alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 8, color: index === 0 ? colors.textTertiary : colors.primaryDark, fontWeight: "800" }}>▲</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => onMoveDown(index)}
+                    disabled={index === groups.length - 1}
+                    style={{
+                      width: 18, height: 18, borderRadius: 4,
+                      backgroundColor: index === groups.length - 1 ? colors.background : colors.primaryLight,
+                      alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 8, color: index === groups.length - 1 ? colors.textTertiary : colors.primaryDark, fontWeight: "800" }}>▼</Text>
+                  </Pressable>
+                </View>
+
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 17, fontWeight: "800", color: colors.text }}>{g.name}</Text>
                   <Text style={{ ...typography.caption, marginTop: 4 }}>
                     멤버 {g.members.length}명 · 맛집 {g.places.length}개
                   </Text>
                 </View>
-                <View style={{
-                  backgroundColor: g.myRole === "admin" ? colors.primaryLight : colors.background,
-                  paddingVertical: 4, paddingHorizontal: 10, borderRadius: radius.full,
-                }}>
-                  <Text style={{
-                    fontSize: 11, fontWeight: "700",
-                    color: g.myRole === "admin" ? colors.primaryDark : colors.textTertiary,
+
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  {/* 즐겨찾기 버튼 */}
+                  <Pressable
+                    onPress={() => onToggleFavorite(g.id)}
+                    style={{
+                      width: 30, height: 30, borderRadius: radius.full,
+                      backgroundColor: g.isFavorite ? FAVORITE_BORDER : colors.background,
+                      alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 15 }}>{g.isFavorite ? "⭐" : "☆"}</Text>
+                  </Pressable>
+
+                  <View style={{
+                    backgroundColor: g.myRole === "admin" ? colors.primaryLight : colors.background,
+                    paddingVertical: 4, paddingHorizontal: 10, borderRadius: radius.full,
                   }}>
-                    {g.myRole === "admin" ? "관리자" : "멤버"}
-                  </Text>
+                    <Text style={{
+                      fontSize: 11, fontWeight: "700",
+                      color: g.myRole === "admin" ? colors.primaryDark : colors.textTertiary,
+                    }}>
+                      {g.myRole === "admin" ? "관리자" : "멤버"}
+                    </Text>
+                  </View>
                 </View>
               </View>
             </Pressable>
 
-            <View style={{ flexDirection: "row", borderTopWidth: 1, borderColor: colors.divider }}>
+            <View style={{
+              flexDirection: "row",
+              borderTopWidth: 1,
+              borderColor: g.isFavorite ? FAVORITE_BORDER : colors.divider,
+            }}>
               <Pressable
                 onPress={() => rootNavigation.navigate("InviteMembers", { groupId: g.id, groupName: g.name })}
                 style={{
                   flex: 1, padding: spacing.md, alignItems: "center",
-                  borderRightWidth: g.myRole === "admin" ? 1 : 0, borderColor: colors.divider,
+                  borderRightWidth: g.myRole === "admin" ? 1 : 0,
+                  borderColor: g.isFavorite ? FAVORITE_BORDER : colors.divider,
                 }}
               >
                 <Text style={{ fontSize: 13, fontWeight: "700", color: colors.textSecondary }}>멤버 관리</Text>
@@ -169,7 +248,8 @@ export default function GroupScreen({ navigation }: Props) {
                     onPress={() => { setEditingGroupId(g.id); setEditingName(g.name); }}
                     style={{
                       padding: spacing.md, paddingHorizontal: spacing.lg,
-                      alignItems: "center", borderRightWidth: 1, borderColor: colors.divider,
+                      alignItems: "center", borderRightWidth: 1,
+                      borderColor: g.isFavorite ? FAVORITE_BORDER : colors.divider,
                     }}
                   >
                     <Text style={{ fontSize: 13, fontWeight: "700", color: colors.textSecondary }}>수정</Text>
@@ -215,24 +295,18 @@ export default function GroupScreen({ navigation }: Props) {
       <View
         pointerEvents="box-none"
         style={{
-          position: "absolute",
-          right: 20,
-          bottom: insets.bottom + 8,
-          alignItems: "flex-end",
-          zIndex: 999,
+          position: "absolute", right: 20, bottom: insets.bottom + 8,
+          alignItems: "flex-end", zIndex: 999,
         }}
       >
-        {/* 모임 만들기 */}
         {fabOpen && (
           <View style={{ marginBottom: spacing.sm }}>
             <Pressable
               onPress={() => { closeFab(); rootNavigation.navigate("CreateGroup"); }}
               style={{
-                backgroundColor: MINT,
-                paddingVertical: 11, paddingHorizontal: 18,
-                borderRadius: radius.full,
-                shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, elevation: 8,
-                minWidth: 130, alignItems: "center",
+                backgroundColor: MINT, paddingVertical: 11, paddingHorizontal: 18,
+                borderRadius: radius.full, shadowColor: "#000", shadowOpacity: 0.12,
+                shadowRadius: 6, elevation: 8, minWidth: 130, alignItems: "center",
               }}
             >
               <Text style={{ color: colors.white, fontWeight: "800", fontSize: 13 }}>+ 모임 만들기</Text>
@@ -240,16 +314,13 @@ export default function GroupScreen({ navigation }: Props) {
           </View>
         )}
 
-        {/* 초대코드 참가 */}
         {fabOpen && (
           <View style={{ marginBottom: spacing.sm }}>
             <Pressable
               onPress={() => { closeFab(); rootNavigation.navigate("JoinGroup"); }}
               style={{
-                backgroundColor: colors.white,
-                paddingVertical: 11, paddingHorizontal: 18,
-                borderRadius: radius.full,
-                borderWidth: 1.5, borderColor: MINT,
+                backgroundColor: colors.white, paddingVertical: 11, paddingHorizontal: 18,
+                borderRadius: radius.full, borderWidth: 1.5, borderColor: MINT,
                 shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 6, elevation: 8,
                 minWidth: 130, alignItems: "center",
               }}
@@ -259,12 +330,10 @@ export default function GroupScreen({ navigation }: Props) {
           </View>
         )}
 
-        {/* 메인 FAB */}
         <Pressable
           onPress={toggleFab}
           style={{
-            width: 52, height: 52, borderRadius: radius.full,
-            backgroundColor: MINT,
+            width: 52, height: 52, borderRadius: radius.full, backgroundColor: MINT,
             alignItems: "center", justifyContent: "center",
             shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 10, elevation: 10,
           }}

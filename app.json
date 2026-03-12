@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "matzip-moim-app",
+    "name": "Matzip모임",
     "slug": "matzip-moim-app",
+    "scheme": "matzipmoimapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -20,10 +21,17 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.kimjjammin.matzipmoimapp"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5fa51518-1081-4640-a6c9-b0bbead876a1"
+      }
+    },
+    "owner": "kimjjammin"
   }
 }

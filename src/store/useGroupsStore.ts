@@ -27,6 +27,8 @@ type GroupsState = {
   removeMember: (groupId: string, userId: string) => Promise<void>;
   addPlace: (groupId: string, place: AddPlaceInput) => Promise<string>;
   ratePlace: (placeId: string, userId: string, value: Rating) => Promise<void>;
+  toggleFavorite: (groupId: string) => Promise<void>;
+  reorderGroups: (groupIds: string[]) => Promise<void>;
 };
 
 async function getMyUid() {
@@ -54,14 +56,24 @@ async function fetchMyRole(groupId: string, uid: string) {
 async function fetchMembers(groupId: string): Promise<GroupMember[]> {
   const { data, error } = await supabase
     .from("group_members")
-    .select("user_id, role, profiles(nickname)")
+    .select("user_id, role")
     .eq("group_id", groupId);
 
   if (error) throw error;
 
+  const userIds = (data ?? []).map((m: any) => m.user_id);
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, nickname")
+    .in("id", userIds);
+
+  const nickMap: Record<string, string> = {};
+  (profiles ?? []).forEach((p: any) => { nickMap[p.id] = p.nickname; });
+
   return (data ?? []).map((m: any) => ({
     userId: m.user_id,
-    nickname: m?.profiles?.nickname ?? null,
+    nickname: nickMap[m.user_id] ?? null,
     role: normalizeMyRole(m.role),
   }));
 }
@@ -117,8 +129,9 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
 
       const { data: memberships, error: mErr } = await supabase
         .from("group_members")
-        .select("group_id, role, groups:groups(id, name)")
-        .eq("user_id", uid);
+        .select("group_id, role, is_favorite, sort_order, groups:groups(id, name)")
+        .eq("user_id", uid)
+        .order("sort_order", { ascending: true });
 
       if (mErr) throw mErr;
 
@@ -127,6 +140,8 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
           id: m?.groups?.id ?? m.group_id,
           name: m?.groups?.name ?? "모임",
           myRole: normalizeMyRole(m.role),
+          isFavorite: m.is_favorite ?? false,
+          sortOrder: m.sort_order ?? 0,
         }))
         .filter((g) => !!g.id);
 
@@ -141,10 +156,19 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
           id: g.id,
           name: g.name,
           myRole: g.myRole,
+          isFavorite: g.isFavorite,
+          sortOrder: g.sortOrder,
           members,
           places,
         });
       }
+
+      // 즐겨찾기 먼저, 그 다음 sort_order 순
+      result.sort((a, b) => {
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      });
 
       set({ groups: result });
     } catch (e) {
@@ -174,6 +198,7 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
       group_id: g.id,
       user_id: uid,
       role: "owner",
+      sort_order: get().groups.length,
     });
 
     if (memErr) throw memErr;
@@ -269,18 +294,22 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const trimmed = code.trim();
     if (!trimmed) throw new Error("초대코드를 입력해주세요.");
 
-    const { data: groupExists, error: gErr } = await supabase
-      .from("groups")
-      .select("id")
-      .eq("id", trimmed)
+    const { data: invite, error: iErr } = await supabase
+      .from("group_invites")
+      .select("group_id, expires_at")
+      .eq("code", trimmed)
       .single();
 
-    if (gErr || !groupExists) throw new Error("유효하지 않은 초대코드입니다.");
+    if (iErr || !invite) throw new Error("유효하지 않은 초대코드입니다.");
+
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      throw new Error("만료된 초대코드입니다.");
+    }
 
     const { error } = await supabase
       .from("group_members")
       .upsert(
-        { group_id: trimmed, user_id: uid, role: "member" },
+        { group_id: invite.group_id, user_id: uid, role: "member", sort_order: get().groups.length },
         { onConflict: "group_id,user_id" }
       );
 
@@ -296,7 +325,21 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     const myRole = await fetchMyRole(groupId, uid);
     if (myRole !== "admin") throw new Error("초대코드 생성은 관리자만 가능합니다.");
 
-    return groupId;
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    const { error } = await supabase.from("group_invites").insert({
+      code,
+      group_id: groupId,
+      created_by: uid,
+      expires_at: expiresAt.toISOString(),
+    });
+
+    if (error) throw error;
+
+    return code;
   },
 
   removeMember: async (groupId: string, userId: string) => {
@@ -315,6 +358,63 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
     if (error) throw error;
 
     await get().loadGroups();
+  },
+
+  toggleFavorite: async (groupId: string) => {
+    const uid = await getMyUid();
+    if (!uid) throw new Error("로그인이 필요합니다.");
+
+    const group = get().groups.find((g) => g.id === groupId);
+    const newFav = !(group?.isFavorite ?? false);
+
+    // 낙관적 업데이트 (UI 즉시 반영)
+    set((state) => ({
+      groups: state.groups
+        .map((g) => g.id === groupId ? { ...g, isFavorite: newFav } : g)
+        .sort((a, b) => {
+          if (a.isFavorite && !b.isFavorite) return -1;
+          if (!a.isFavorite && b.isFavorite) return 1;
+          return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+        }),
+    }));
+
+    const { error } = await supabase
+      .from("group_members")
+      .update({ is_favorite: newFav })
+      .eq("group_id", groupId)
+      .eq("user_id", uid);
+
+    if (error) {
+      await get().loadGroups(); // 실패시 롤백
+      throw error;
+    }
+  },
+
+  reorderGroups: async (groupIds: string[]) => {
+    const uid = await getMyUid();
+    if (!uid) throw new Error("로그인이 필요합니다.");
+
+    // 낙관적 업데이트
+    set((state) => {
+      const reordered = groupIds
+        .map((id, index) => {
+          const g = state.groups.find((g) => g.id === id);
+          return g ? { ...g, sortOrder: index } : null;
+        })
+        .filter(Boolean) as Group[];
+      return { groups: reordered };
+    });
+
+    // DB 업데이트
+    await Promise.all(
+      groupIds.map((groupId, index) =>
+        supabase
+          .from("group_members")
+          .update({ sort_order: index })
+          .eq("group_id", groupId)
+          .eq("user_id", uid)
+      )
+    );
   },
 
   addPlace: async (groupId: string, place: AddPlaceInput) => {

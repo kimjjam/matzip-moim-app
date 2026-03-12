@@ -26,6 +26,8 @@ export type Group = {
   id: string;
   name: string;
   myRole: "admin" | "member";
+  isFavorite?: boolean;
+  sortOrder?: number;
   members: GroupMember[];
   places: Place[];
 };

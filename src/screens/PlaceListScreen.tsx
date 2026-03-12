@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, FlatList, Pressable, ActivityIndicator } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +9,8 @@ import { colors, radius, spacing, typography } from "../theme";
 type Props = NativeStackScreenProps<RootStackParamList, "Places">;
 
 const MINT = "#A8DAC5";
+
+type SortType = "latest" | "rating" | "name";
 
 function average(ratings: { value: number }[]) {
   if (!ratings || ratings.length === 0) return null;
@@ -37,6 +39,7 @@ export default function PlaceListScreen({ navigation, route }: Props) {
   const { groupId } = route.params;
   const { groups, loadGroups, loading } = useGroupsStore();
   const insets = useSafeAreaInsets();
+  const [sortType, setSortType] = useState<SortType>("latest");
 
   const group = useMemo(() => groups.find((g) => g.id === groupId), [groups, groupId]);
 
@@ -46,6 +49,33 @@ export default function PlaceListScreen({ navigation, route }: Props) {
     });
     return unsubscribe;
   }, [navigation, loadGroups]);
+
+  const sortedPlaces = useMemo(() => {
+    if (!group) return [];
+    const places = [...group.places];
+    if (sortType === "latest") {
+      return places.sort((a, b) =>
+        new Date(b.visitedAt).getTime() - new Date(a.visitedAt).getTime()
+      );
+    }
+    if (sortType === "rating") {
+      return places.sort((a, b) => {
+        const avgA = average(a.ratings) ?? -1;
+        const avgB = average(b.ratings) ?? -1;
+        return avgB - avgA;
+      });
+    }
+    if (sortType === "name") {
+      return places.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    }
+    return places;
+  }, [group, sortType]);
+
+  const sortButtons: { label: string; value: SortType }[] = [
+    { label: "최신순", value: "latest" },
+    { label: "별점순", value: "rating" },
+    { label: "가나다순", value: "name" },
+  ];
 
   if (!group) {
     return (
@@ -58,7 +88,7 @@ export default function PlaceListScreen({ navigation, route }: Props) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <FlatList
-        data={group.places}
+        data={sortedPlaces}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{
           padding: spacing.xl,
@@ -74,6 +104,30 @@ export default function PlaceListScreen({ navigation, route }: Props) {
               맛집 {group.places.length}개
             </Text>
             {loading && <ActivityIndicator color={colors.primary} />}
+
+            {/* 정렬 버튼 */}
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
+              {sortButtons.map((btn) => (
+                <Pressable
+                  key={btn.value}
+                  onPress={() => setSortType(btn.value)}
+                  style={{
+                    paddingVertical: 6, paddingHorizontal: 14,
+                    borderRadius: radius.full,
+                    backgroundColor: sortType === btn.value ? colors.primary : colors.card,
+                    borderWidth: 1,
+                    borderColor: sortType === btn.value ? colors.primary : colors.border,
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 12, fontWeight: "700",
+                    color: sortType === btn.value ? colors.white : colors.textSecondary,
+                  }}>
+                    {btn.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
         )}
         ListEmptyComponent={() => (

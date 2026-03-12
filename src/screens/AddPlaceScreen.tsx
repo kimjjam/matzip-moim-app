@@ -22,6 +22,18 @@ function parseDecimal(text: string) {
   const n = Number(normalized);
   return Number.isFinite(n) ? n : 0;
 }
+function todayString() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function isValidDate(s: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s);
+  return !isNaN(d.getTime());
+}
 
 export default function AddPlaceScreen({ navigation, route }: Props) {
   const { groupId } = route.params;
@@ -36,6 +48,7 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
   const [name, setName] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [memo, setMemo] = useState("");
+  const [visitedAt, setVisitedAt] = useState(todayString());
   const [initialRating, setInitialRating] = useState<number>(0);
   const [initialRatingText, setInitialRatingText] = useState<string>("0");
   const [initialComment, setInitialComment] = useState<string>("");
@@ -57,6 +70,10 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
       Alert.alert("확인", "맛집 이름을 입력해주세요.");
       return;
     }
+    if (!isValidDate(visitedAt)) {
+      Alert.alert("확인", "방문일을 YYYY-MM-DD 형식으로 입력해주세요.");
+      return;
+    }
     if (!userId) {
       Alert.alert("로그인 필요", "이 기능은 계정 로그인 모드에서 사용됩니다.");
       return;
@@ -73,7 +90,7 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
           tags,
           memo: memo.trim() || null,
           created_by: userId,
-          visited_at: new Date().toISOString(),
+          visited_at: new Date(visitedAt).toISOString(),
         })
         .select("id")
         .single();
@@ -133,6 +150,37 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
           placeholderTextColor={colors.textTertiary}
           style={inputStyle}
         />
+      </View>
+
+      {/* 방문일 */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={{ ...typography.label }}>방문일 <Text style={{ color: colors.danger }}>*</Text></Text>
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <TextInput
+            value={visitedAt}
+            onChangeText={setVisitedAt}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.textTertiary}
+            keyboardType="numeric"
+            maxLength={10}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <Pressable
+            onPress={() => setVisitedAt(todayString())}
+            style={{
+              paddingHorizontal: spacing.md,
+              backgroundColor: colors.primaryLight,
+              borderRadius: radius.md,
+              alignItems: "center", justifyContent: "center",
+              borderWidth: 1, borderColor: colors.primary,
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primaryDark }}>오늘</Text>
+          </Pressable>
+        </View>
+        {visitedAt.length === 10 && !isValidDate(visitedAt) && (
+          <Text style={{ fontSize: 12, color: colors.danger }}>날짜 형식이 올바르지 않아요 (YYYY-MM-DD)</Text>
+        )}
       </View>
 
       {/* 태그 */}
@@ -227,7 +275,6 @@ export default function AddPlaceScreen({ navigation, route }: Props) {
           style={{ ...inputStyle, textAlign: "center" }}
         />
 
-        {/* 한줄평 */}
         <TextInput
           value={initialComment}
           onChangeText={setInitialComment}
